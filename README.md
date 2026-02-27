@@ -1,1 +1,1 @@
-A terminal calculator made in plain C.
+A terminal-based calculator made in plain C.
