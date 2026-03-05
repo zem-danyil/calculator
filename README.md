@@ -1,6 +1,9 @@
 ## A terminal-based calculator made in plain C
 
-Screenshots:
+Currently, **formatting is only supported on Windows 10 version 1511 and later**, since older versions of Windows do not support ANSI at all. This will be fixed soon by using Windows Console API as a fallback, which works on all Windows versions and adding a separate version of the program with no formatting at all.
 
-![Screenshot-1](https://github.com/zem-danyil/calculator/blob/main/Screenshot%201.png?raw=true)
-![Screenshot-2](https://github.com/zem-danyil/calculator/blob/main/Screenshot%202.png?raw=true)
+## In the latest version 1.1
+
+\- variables have been added
+\- fixed floating point garbage
+\- ANSI explicitly turned on
