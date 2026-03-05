@@ -12,7 +12,7 @@ const char *pos;
 bool shouldClose = false;
 double lastResult = NAN;
 
-// ANSI codes
+// ──── ANSI Codes ────────────────
 #define reset "\033[0m"
 #define bold "\033[1m"
 #define inverse "\033[7m"
@@ -23,21 +23,13 @@ double lastResult = NAN;
 #define BLUE "\033[34m"
 #define PURPLE "\033[35m"
 #define CYAN "\033[36m"
-
-void skipSpaces() { while (isspace(*pos)) pos++; }
-double parseFactor();
-double parseTerm();
-double parseExpr();
-double parseCompare();
-double calculate(const char *input);
-void readKey(char *input);
-void printHelp();
-void boot();
+// ────────────────────────────────
 
 typedef enum {
     CMD_UNKNOWN = -1,
     CMD_EXIT,
-    CMD_HELP,
+    CMD_FUNCS,
+    CMD_VARS,
 } Command;
 Command parseCommand(const char *input);
 
@@ -48,7 +40,9 @@ typedef struct {
 
 CommandEntry commands[] = {
     {"exit", CMD_EXIT},
-    {"help", CMD_HELP},
+    {"close", CMD_EXIT},
+    {"funcs", CMD_FUNCS},
+    {"vars", CMD_VARS},
 };
 int commandCount = sizeof(commands) / sizeof(commands[0]);
 
@@ -64,23 +58,102 @@ typedef struct {
 #define PHI  1.61803398874989484820
 #define G    9.80665
 #define C    299792458.0
-double torad(double deg) { return deg * (PI / 180.0); }
-double todeg(double rad) { return rad * (180.0 / PI); }
-double sind(double x)  { return sin(torad(x)); }
-double cosd(double x)  { return cos(torad(x)); }
-double tand(double x)  { return tan(torad(x)); }
+
+#define PIL 3.14159265358979323846264338327950288L
+#define SQ2 0.70710678118654752440  // sqrt(2)/2
+#define SQ3 0.86602540378443864676  // sqrt(3)/2
+
+double torad(double deg) { return deg * (PIL / 180.0L); }
+double todeg(double rad) { return rad * (180.0L / PIL); }
+static double snap_degree(double x) {
+    x = fmod(x, 360.0);
+    if (x < 0) x += 360.0;
+    double r = round(x);
+    return (fabs(x - r) < 1e-9) ? r : x;
+}
+double sind(double x) {
+    x = snap_degree(x);
+    int d = (int)x % 360;
+    switch (d) {
+        case   0: return  0.0;
+        case  30: return  0.5;
+        case  45: return  SQ2;
+        case  60: return  SQ3;
+        case  90: return  1.0;
+        case 120: return  SQ3;
+        case 135: return  SQ2;
+        case 150: return  0.5;
+        case 180: return  0.0;
+        case 210: return -0.5;
+        case 225: return -SQ2;
+        case 240: return -SQ3;
+        case 270: return -1.0;
+        case 300: return -SQ3;
+        case 315: return -SQ2;
+        case 330: return -0.5;
+    }
+    return sin(x * (PIL / 180.0L));
+}
+double cosd(double x) {
+    x = snap_degree(x);
+    int d = (int)x % 360;
+    switch (d) {
+        case   0: return  1.0;
+        case  30: return  SQ3;
+        case  45: return  SQ2;
+        case  60: return  0.5;
+        case  90: return  0.0;
+        case 120: return -0.5;
+        case 135: return -SQ2;
+        case 150: return -SQ3;
+        case 180: return -1.0;
+        case 210: return -SQ3;
+        case 225: return -SQ2;
+        case 240: return -0.5;
+        case 270: return  0.0;
+        case 300: return  0.5;
+        case 315: return  SQ2;
+        case 330: return  SQ3;
+    }
+    return cos(x * (PIL / 180.0L));
+}
+double tand(double x) {
+    x = snap_degree(x);
+    int d = (int)x % 360;
+    switch (d) {
+        case  90:
+        case 270: return NAN;
+        case   0:
+        case 180: return  0.0;
+        case  30:
+        case 210: return  1.0 / sqrt(3.0);
+        case  45:
+        case 225: return  1.0;
+        case  60:
+        case 240: return  sqrt(3.0);
+        case 120:
+        case 300: return -sqrt(3.0);
+        case 135:
+        case 315: return -1.0;
+        case 150:
+        case 330: return -1.0 / sqrt(3.0);
+    }
+    return tan(x * (PIL / 180.0L));
+}
 double asind(double x) { return todeg(asin(x)); }
 double acosd(double x) { return todeg(acos(x)); }
 double atand(double x) { return todeg(atan(x)); }
 double sign(double x)  { return (x > 0) - (x < 0); }
-double fact(double x)   { 
+double fact(double x)  {
     if (x < 0) return NAN;
-    int n = (int)x;
-    double r = 1;
-    for (int i = 2; i <= n; i++) r *= i;
-    return r;
+    if (x == (int)x) {  // exact integer: compute directly
+        double r = 1;
+        for (int i = 2; i <= (int)x; i++) r *= i;
+        return r;
+    }
+    return tgamma(x + 1);  // e.g. fact(0.5) = √π/2
 }
-double logn(double x, double y) { return log(x)/log(y);}
+double logn(double x, double y) { return log(x)/log(y); }
 double dmin(double x, double y) { return x < y ? x : y; }
 double dmax(double x, double y) { return x > y ? x : y; }
 FuncEntry funcs[] = {
@@ -121,6 +194,41 @@ FuncEntry funcs[] = {
     { "max",   NULL,  dmax  },
 };
 int funcCount = sizeof(funcs) / sizeof(funcs[0]);
+// ──── Variables ─────────────────
+#define MAX_VARS 128
+typedef struct {
+    char name[32];
+    double value;
+} Variable;
+
+Variable vars[MAX_VARS];
+int varCount = 0;
+
+void setVar(const char *name, double value);
+double getVar(const char *name, bool *found);
+
+const char *reserved[] = { "pi", "tau", "e", "phi", "inf", "g", "c", "ans" };
+
+int reservedCount = sizeof(reserved) / sizeof(reserved[0]);
+bool isReserved(const char *name) {
+    for (int i = 0; i < reservedCount; i++)
+        if (strcasecmp(name, reserved[i]) == 0) return true;
+    // also block function names
+    for (int i = 0; i < funcCount; i++)
+        if (strcmp(name, funcs[i].name) == 0) return true;
+    return false;
+}
+// ────────────────────────────────
+
+void skipSpaces() { while (isspace(*pos)) pos++; }
+double parseFactor();
+double parseTerm();
+double parseExpr();
+double parseCompare();
+double calculate(const char *input);
+void readKey(char *input);
+void printFuncs();
+void boot();
 
 int main()
 {
@@ -138,20 +246,74 @@ int main()
         switch (parseCommand(ch))
         {
             case CMD_EXIT: shouldClose = true; break;
-            case CMD_HELP: printHelp(); break;
+            case CMD_FUNCS: printFuncs(); break;
+            case CMD_VARS:
+                if (varCount == 0)
+                    printf(PURPLE " no variables defined\n" reset);
+                else
+                {
+                    // find longest name
+                    int maxLen = 0;
+                    for (int i = 0; i < varCount; i++)
+                    {
+                        int len = strlen(vars[i].name);
+                        if (len > maxLen) maxLen = len;
+                    }
+
+                    printf(inverse bold PURPLE "\n Variables: \n" reset);
+                    for (int i = 0; i < varCount; i++)
+                        printf(bold PURPLE " %-*s" reset " = %.15g\n",
+                            maxLen, vars[i].name, vars[i].value);
+                    printf("\n");
+                }
+                break;
             case CMD_UNKNOWN:
+                if (ch[0] == '\0') break;
+
+                char *eq = strchr(ch, '=');
+                if (eq && eq != ch && isalpha((unsigned char)ch[0]))
+                {
+                    char prev = *(eq - 1);
+                    char next = *(eq + 1);
+                    if (prev != '!' && prev != '<' && prev != '>' && next != '=')
+                    {
+                        char varName[32] = {0};
+                        int len = eq - ch;
+                        strncpy(varName, ch, len);
+                        while (len > 0 && varName[len-1] == ' ') varName[--len] = '\0';
+
+                        if (isReserved(varName))
+                        {
+                            fprintf(stderr, inverse RED " ! " reset " '%s' is reserved and cannot be assigned\n", varName);
+                            break;
+                        }
+
+                        double result = calculate(eq + 1);
+                        if (!isnan(result))
+                        {
+                            setVar(varName, result);
+                            lastResult = result;
+                            printf(bold YELLOW "┌──┘\n");
+                            printf("│ %s = %.15g\n", varName, result);
+                            printf("└──┐\n" reset);
+                        }
+                        break;
+                    }
+                }
+
                 double result = calculate(ch);
                 if (!isnan(result))
                 {
                     lastResult = result;
-                    printf(bold YELLOW "┌──┘" "\n");
-                    printf("│ = %.18g\n", result);
-                    printf("└──┐" "\n" reset);
+                    printf(bold YELLOW "┌──┘\n");
+                    printf("│ = %.15g\n", result);
+                    printf("└──┐\n" reset);
                 }
+                break;
         }
     }
 
-    printf(inverse bold GREEN " ! " reset " Calculator closed\n");
+    printf(inverse bold RED " ! " reset " Calculator closed\n");
     return 0;
 }
 
@@ -175,6 +337,7 @@ double parseFactor()
             name[i++] = *pos++;
         name[i] = '\0';
 
+        // ──── Constants ─────────────────
         skipSpaces();
         if (strcmp(name, "pi")  == 0) return PI;
         if (strcmp(name, "tau") == 0) return TAU;
@@ -184,6 +347,13 @@ double parseFactor()
         if (strcmp(name, "g")   == 0) return G;
         if (strcmp(name, "c")   == 0) return C;
         if (strcmp(name, "ans") == 0) return lastResult;
+        // ────────────────────────────────
+        
+        // ──── Variables ─────────────────
+        bool found;
+        double val = getVar(name, &found);
+        if (found) return val;
+        // ────────────────────────────────
 
         if (*pos == '(')
         {
@@ -280,7 +450,8 @@ double parseTerm()
         {
             pos++;
             double right = parseFactor();
-            if (right == 0.0) {
+            if (right == 0.0) 
+            {
                 fprintf(stderr, inverse RED " ! " reset " modulus by zero\n");
                 return NAN;
             }
@@ -357,9 +528,48 @@ void readKey(char *input)
     input[strcspn(input, "\n")] = '\0'; // strip trailing newline
 }
 
+// ──── Variables ─────────────────
+void setVar(const char *name, double value)
+{
+    if (strlen(name) > 31)
+    {
+        fprintf(stderr, inverse RED " ! " reset " variable name too long (max 31 chars)\n");
+        return;
+    }
+    for (int i = 0; i < varCount; i++)
+    {
+        if (strcmp(vars[i].name, name) == 0)
+        {
+            vars[i].value = value;  // update existing
+            return;
+        }
+    }
+    if (varCount < MAX_VARS)
+    {
+        strncpy(vars[varCount].name, name, 31);
+        vars[varCount].value = value;
+        varCount++;
+    }
+}
+
+double getVar(const char *name, bool *found)
+{
+    for (int i = 0; i < varCount; i++)
+    {
+        if (strcmp(vars[i].name, name) == 0)
+        {
+            *found = true;
+            return vars[i].value;
+        }
+    }
+    *found = false;
+    return NAN;
+}
+// ────────────────────────────────
+
 #define PLINE(...) do { printf(__VA_ARGS__); fflush(stdout); Sleep(10); } while(0)
 
-void printHelp()
+void printFuncs()
 {
     PLINE(inverse bold YELLOW "\n List of commands:             \n" reset);
 
@@ -438,6 +648,13 @@ void printHelp()
 
 void boot()
 {
+    // ──── Enable ANSI ───────────────
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD dwMode = 0;
+    GetConsoleMode(hOut, &dwMode);
+    SetConsoleMode(hOut, dwMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+    // ────────────────────────────────
+
     const char *title1 = " Calculator.c ";
     const char *title2 = " Calculator.c      version 1.0";
     int len1 = strlen(title1);
@@ -447,7 +664,7 @@ void boot()
     for (int i = 0; i < len1; i++) {
         printf(bold "%c" reset, title1[i]);
         fflush(stdout);
-        Sleep(20);
+        Sleep(15);
     }
 
     printf("\r");
@@ -459,14 +676,16 @@ void boot()
         else 
             printf(PURPLE "%c" reset, title2[i]);
         fflush(stdout);
-        Sleep(20);
+        Sleep(15);
     }
 
-    Sleep(70);
+    Sleep(60);
 
     printf("\n");
-    printf("Type " YELLOW "exit" reset " to close the program\n");
-    Sleep(20);
-    printf("Type " YELLOW "help" reset " to see a list of commands\n\n");
-    Sleep(20);
+    printf(YELLOW "'exit' / 'close'" PURPLE " ─ close the program\n");
+    Sleep(15);
+    printf(YELLOW "'funcs'" PURPLE "          ─ show a list of functions\n");
+    Sleep(15);
+    printf(YELLOW "'vars'" PURPLE "           ─ show a list of variables\n\n");
+    Sleep(15);
 }
